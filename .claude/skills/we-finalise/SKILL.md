@@ -1,6 +1,6 @@
 ---
 name: we-finalise
-description: Procédure Werocket de finalisation d'un site WordPress + Breakdance avant mise en ligne, exécutée via WP-CLI en SSH et Playwright. Couvre cookies (werocket tools), liens réseaux sociaux, alt/légendes/descriptions de la médiathèque, cohérence des alt côté Breakdance, responsive, meta title/description Rank Math, SEO local, GEO, modules Rank Math (Local SEO, robots.txt, llms.txt), favicon, Independent Analytics, et produit un rapport de finalisation. Utilise cette skill dès que l'utilisateur parle de finaliser, livrer, mettre en ligne, préparer la mise en prod, faire la checklist de fin de projet, "passer we-finalise", ou demande une seule de ces étapes (alt des images, meta Rank Math, favicon, responsive check, SEO local) sur un site Werocket — même s'il ne prononce pas le mot "finalisation".
+description: Procédure Werocket de finalisation d'un site WordPress + Breakdance avant mise en ligne, exécutée via WP-CLI en SSH et Playwright. Couvre cookies (werocket tools), liens réseaux sociaux, alt/légendes/descriptions de la médiathèque, cohérence des alt côté Breakdance, responsive, meta title/description Rank Math, SEO local, GEO, modules Rank Math (Local SEO, Schema/données structurées, robots.txt, llms.txt), données structurées JSON-LD adaptées aux CPT et au secteur du site, favicon, Independent Analytics, et produit un rapport de finalisation. Utilise cette skill dès que l'utilisateur parle de finaliser, livrer, mettre en ligne, préparer la mise en prod, faire la checklist de fin de projet, "passer we-finalise", ou demande une seule de ces étapes (alt des images, meta Rank Math, données structurées / schema / rich results, favicon, responsive check, SEO local) sur un site Werocket — même s'il ne prononce pas le mot "finalisation".
 ---
 
 # we-finalise — finalisation d'un site Werocket
@@ -62,9 +62,12 @@ Crée un dossier de travail local `.we-finalise/` (à ajouter au `.gitignore`) p
 scripts/list-urls.sh @staging page post <cpts>   # → .we-finalise/urls.json
 wp @staging plugin list --format=json            # → état des plugins
 scripts/media-audit.sh @staging                  # → .we-finalise/media.json
+scripts/schema-audit.sh @staging                 # → .we-finalise/schema.json
 ```
 
 `urls.json` liste chaque contenu publié (ID, type, titre, slug, URL, `breakdance` oui/non) plus les templates Breakdance (header, footer, templates, popups — `template: true`, sans URL) et une entrée `_meta` avec la clé postmeta Breakdance détectée, `blog_public` et `site_icon`. `media.json` liste chaque image de la médiathèque avec alt, légende, description, URL, et les posts qui l'utilisent (détection dans `post_content` et dans `breakdance_data`). C'est la base des étapes 3 et 5.
+
+`schema.json` liste les post types publics réellement présents (slug, label, nombre de contenus publiés, `has_archive`, taxonomies, schema Rank Math déjà configuré) plus l'état du module Schema. C'est ce qui pilote l'étape 7 — et c'est aussi là que tu découvres les CPT métier du site : si `post_types` de la config ne les contient pas tous, complète-le et relance `list-urls.sh` avec la liste complète, sinon des pages entières échapperont aux étapes 3 à 6.
 
 ## Étape 2 — Cookies (plugin werocket tools)
 
@@ -115,25 +118,69 @@ Après toute écriture dans `breakdance_data` : `wp @staging cache flush` puis p
 Suis `references/rankmath.md` pas à pas. Résumé :
 
 - Mode avancé activé (sinon les modules n'apparaissent pas).
-- Module **Local SEO** activé et fiche remplie depuis `client` : type d'organisation, nom, logo, adresse, téléphone, email, horaires, zone.
+- Module **Schema (Structured Data)** activé — slug `rich-snippet`. L'activation et la configuration par CPT sont l'étape 7 ; ici, vérifie seulement qu'il est dans `rank_math_modules`.
+- Module **Local SEO** activé et fiche remplie depuis `client` : type d'organisation, nom, logo, adresse, téléphone, email, horaires, zone. Le champ `local_business_type` sort de la table secteur → type de `references/schema.md` §1 : c'est lui qui décide des rich results, `LocalBusiness` générique n'en active presque aucun.
 - **robots.txt** : contenu vérifié via Rank Math, avec `Sitemap:` pointant sur le sitemap Rank Math, sans `Disallow: /` résiduel de la phase de dev.
 - Module **LLMs.txt** activé, post types publics inclus, puis `curl -s <site_url>/llms.txt` pour vérifier que le fichier répond et liste les bonnes pages.
 - Vérifier aussi que `blog_public` vaut `1` (`wp option get blog_public`) — un site laissé en « demander aux moteurs de ne pas indexer » est l'erreur de mise en ligne la plus fréquente et la plus coûteuse.
 
-## Étape 7 — Favicon
+## Étape 7 — Données structurées (Schema)
+
+Lis `references/schema.md` avant d'écrire quoi que ce soit : `rankmath.md` §4 donne la mécanique,
+`schema.md` donne le seul choix qui compte — quel type sur quel contenu. Trois principes y
+gouvernent tout : une entité d'entreprise unique et bien sous-typée, un type juste par CPT, et
+**aucune donnée inventée**. Un `aggregateRating` sans avis réels ou des horaires approximatifs sont
+la seule partie de cette procédure qui peut coûter une pénalité manuelle au client : une propriété
+absente est neutre, une propriété fausse est un risque.
+
+1. **Audit** : `scripts/schema-audit.sh @staging` → `.we-finalise/schema.json`. Tu obtiens l'état du
+   module, le `local_business_type` en place, les post types **réellement présents** avec leur
+   nombre de contenus publiés et leur schema par défaut actuel, les schemas déjà posés à la main, et
+   les noms de clés d'options tels qu'ils existent dans cette version du plugin.
+2. **Sous-type de l'entreprise** : compare `local_business_type` à la table secteur → type de
+   `schema.md` §1. `LocalBusiness` générique ou un type absent alors que le secteur en a un précis,
+   c'est la correction la plus rentable de l'étape (elle se fait via la fiche Local SEO, étape 6).
+   Cas particuliers traités dans la référence : praticien seul sous son nom, service sans zone
+   physique.
+3. **Mapping CPT → schema** : pour chaque post type de l'audit (`published > 0`), choisis le type
+   avec la table de `schema.md` §2. Le réflexe à casser est le `article` que Rank Math met par
+   défaut partout : sur une page de service ou un CPT « réalisations », c'est un contresens. `off`
+   vaut toujours mieux qu'un type approximatif. Les CPT techniques (slider, popup, formulaire)
+   passent en `off` et doivent être `noindex`.
+4. **Pages prestation** : ce sont elles qui rapportent. Un `Service` par page, avec `provider.@id`
+   pointant sur l'entité de l'accueil, `areaServed` tiré de `client.zone`, et pas d'`offers` sans
+   tarifs affichés (`schema.md` §3). Récupère le `@id` réellement émis dans le JSON-LD de l'accueil
+   avant de le recopier : il varie selon la version de Rank Math.
+5. **Plan et application** : écris `.we-finalise/schema-plan.json` (format dans `rankmath.md` §4),
+   puis `scripts/apply-schema.sh @staging .we-finalise/schema-plan.json --dry-run` — **lis le diff
+   `from` → `to`** — et enfin sans `--dry-run`. Le plan active le module `rich-snippet` (`"module":
+   true`) et le fil d'Ariane, écrit les défauts par post type et pose les schemas par contenu.
+   `replace: true` efface les `rank_math_schema_*` existants du contenu : ne l'utilise que si
+   `existing_schemas` de l'audit ne contient rien d'écrit à la main par un humain.
+6. **Validation sur le JSON-LD rendu**, pas sur la config : `wp @staging cache flush`, purge du
+   plugin de cache, puis la grille de `schema.md` §5 sur l'accueil et un exemplaire de chaque CPT.
+   Une seule entité d'entreprise, `BreadcrumbList` sur les pages profondes, aucun `%placeholder%`
+   non résolu, aucun `Article` sur une page de service, aucun graphe concurrent émis par le thème
+   ou WooCommerce.
+
+Reporte le sous-type retenu, le mapping CPT → schema appliqué, et surtout ce que tu as
+**volontairement laissé de côté** faute de données (avis, tarifs, horaires) : cette liste est ce
+que le client doit fournir pour aller plus loin.
+
+## Étape 8 — Favicon
 
 Si `front/report.json` indique un favicon présent et fonctionnel (HTTP 200) et que `site_icon` est défini dans `urls.json → _meta`, passe. Sinon : `scripts/make-favicon.sh @staging <logo_source>` génère `.we-finalise/favicon-512.png` à partir du logo. **Regarde le PNG.** S'il est lisible, relance avec `--apply` : import en médiathèque et `site_icon`. Le logo source vient de `logo_source` dans la config, sinon de `wp theme mod get custom_logo`, sinon de l'image du header Breakdance (voir `references/breakdance.md`). Un logotype horizontal réduit en carré est illisible : dans ce cas, isole le symbole si le logo en a un, sinon signale dans le rapport qu'un favicon dédié est à demander au client — ne mets pas un favicon moche en prod.
 
-## Étape 8 — Independent Analytics
+## Étape 9 — Independent Analytics
 
 `wp plugin list` : si `independent-analytics` est absent, `wp plugin install independent-analytics --activate` ; s'il est inactif, active-le. Puis autorise le rôle Éditeur à voir les statistiques : l'option est dans les réglages du plugin ; découvre sa clé avec `wp option list --search='iawp*'` (cherche une option contenant `role`, `permission` ou `access`), lis sa valeur, ajoute `editor`, réécris-la. Documente la clé trouvée dans `references/independent-analytics.md`.
 
-## Étape 9 — Rapport
+## Étape 10 — Rapport
 
 Génère `we-finalise-report.md` à la racine du projet à partir de `references/report-template.md`. Le rapport est le livrable : il liste ce qui a été vérifié, ce qui a été modifié (avec compte et exemples), ce qui reste à faire par un humain dans Breakdance, et les propositions de contenu en attente de validation client. Termine par les bloquants éventuels (plugin manquant, `blog_public` à 0, favicon à demander).
 
 ## Ordre et interruptions
 
-Les étapes 1 → 9 s'enchaînent ; l'étape 4 dépend de 1 et 3 (comparaison des alt). Si l'utilisateur demande une seule étape (« fais juste les metas Rank Math »), fais l'intake minimal nécessaire (config + backup), l'inventaire, l'étape demandée, et un rapport réduit à cette étape. Ne saute jamais le backup.
+Les étapes 1 → 10 s'enchaînent ; l'étape 4 dépend de 1 et 3 (comparaison des alt), et l'étape 7 de l'inventaire des post types (étape 1) et de la fiche Local SEO (étape 6). Si l'utilisateur demande une seule étape (« fais juste les metas Rank Math »), fais l'intake minimal nécessaire (config + backup), l'inventaire, l'étape demandée, et un rapport réduit à cette étape. Ne saute jamais le backup.
 
 Quand une commande échoue en SSH (timeout, permissions), ne contourne pas en supposant le résultat : signale, propose la correction d'accès, et marque l'étape « non vérifiée » dans le rapport.
